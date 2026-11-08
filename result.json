@@ -1,0 +1,13 @@
+﻿{
+  "original": {
+    "latex": "\\begin{array}{r l}{{\\mathbf{4}}{\\mathsf{1}}.}&{{}\\ 1.2(x+2)=0.8(3-x)}\\end{array}",
+    "crop_margin": 0,
+    "seconds": 0.453
+  },
+  "modified": {
+    "latex": "\\begin{array}{r l}{{\\dot{\\alpha}}{\\mit\\Psi}_{*}\\ }&{{}{}1.2(x+2)=0.8(3-x)}\\end{array}",
+    "crop_margin": 20,
+    "seconds": 0.657
+  },
+  "needs_review": true
+}

@@ -1,0 +1,100 @@
+diff --git a/pix2tex/cli.py b/pix2tex/cli.py
+index e2f9a70..4084268 100644
+--- a/pix2tex/cli.py
++++ b/pix2tex/cli.py
+@@ -92,12 +92,15 @@ class LatexOCR:
+         self.tokenizer = PreTrainedTokenizerFast(tokenizer_file=self.args.tokenizer)
+ 
+     @in_model_path()
+-    def __call__(self, img=None, resize=True) -> str:
++    def __call__(self, img=None, resize=True, *, crop_margin: int = 0,
++                 copy_to_clipboard: bool = True) -> str:
+         """Get a prediction from an image
+ 
+         Args:
+             img (Image, optional): Image to predict. Defaults to None.
+             resize (bool, optional): Whether to call the resize model. Defaults to True.
++            crop_margin (int, optional): Pixels retained around each detected crop.
++            copy_to_clipboard (bool, optional): Copy the prediction to the clipboard.
+ 
+         Returns:
+             str: predicted Latex code
+@@ -112,14 +115,18 @@ class LatexOCR:
+                 img = self.last_pic.copy()
+         else:
+             self.last_pic = img.copy()
+-        img = minmax_size(pad(img), self.args.max_dimensions, self.args.min_dimensions)
++        img = minmax_size(pad(img, crop_margin=crop_margin),
++                          self.args.max_dimensions, self.args.min_dimensions)
+         if (self.image_resizer is not None and not self.args.no_resize) and resize:
+             with torch.no_grad():
+                 input_image = img.convert('RGB').copy()
+                 r, w, h = 1, input_image.size[0], input_image.size[1]
+                 for _ in range(10):
+                     h = int(h * r)  # height to resize
+-                    img = pad(minmax_size(input_image.resize((w, h), Image.Resampling.BILINEAR if r > 1 else Image.Resampling.LANCZOS), self.args.max_dimensions, self.args.min_dimensions))
++                    resampling = Image.Resampling.BILINEAR if r > 1 else Image.Resampling.LANCZOS
++                    resized = minmax_size(input_image.resize((w, h), resampling),
++                                          self.args.max_dimensions, self.args.min_dimensions)
++                    img = pad(resized, crop_margin=crop_margin)
+                     t = test_transform(image=np.array(img.convert('RGB')))['image'][:1].unsqueeze(0)
+                     w = (self.image_resizer(t.to(self.args.device)).argmax(-1).item()+1)*32
+                     logging.info(r, img.size, (w, int(input_image.size[1]*r)))
+@@ -127,16 +134,15 @@ class LatexOCR:
+                         break
+                     r = w/img.size[0]
+         else:
+-            img = np.array(pad(img).convert('RGB'))
++            img = np.array(pad(img, crop_margin=crop_margin).convert('RGB'))
+             t = test_transform(image=img)['image'][:1].unsqueeze(0)
+         im = t.to(self.args.device)
+ 
+         dec = self.model.generate(im.to(self.args.device), temperature=self.args.get('temperature', .25))
+         pred = post_process(token2str(dec, self.tokenizer)[0])
+-        try:
+-            clipboard.copy(pred)
+-        except:
+-            pass
++        if copy_to_clipboard:
++            with suppress(Exception):
++                clipboard.copy(pred)
+         return pred
+ 
+ 
+diff --git a/pix2tex/utils/utils.py b/pix2tex/utils/utils.py
+index ee8c020..eddc6db 100644
+--- a/pix2tex/utils/utils.py
++++ b/pix2tex/utils/utils.py
+@@ -98,16 +98,19 @@ def token2str(tokens, tokenizer) -> list:
+     return [''.join(detok.split(' ')).replace('Ġ', ' ').replace('[EOS]', '').replace('[BOS]', '').replace('[PAD]', '').strip() for detok in dec]
+ 
+ 
+-def pad(img: Image, divable: int = 32) -> Image:
++def pad(img: Image, divable: int = 32, *, crop_margin: int = 0) -> Image:
+     """Pad an Image to the next full divisible value of `divable`. Also normalizes the image and invert if needed.
+ 
+     Args:
+         img (PIL.Image): input image
+         divable (int, optional): . Defaults to 32.
++        crop_margin (int, optional): Source pixels to retain around the detected box.
+ 
+     Returns:
+         PIL.Image
+     """
++    if crop_margin < 0:
++        raise ValueError('crop_margin must be non-negative')
+     threshold = 128
+     data = np.array(img.convert('LA'))
+     if data[..., -1].var() == 0:
+@@ -124,6 +127,11 @@ def pad(img: Image, divable: int = 32) -> Image:
+ 
+     coords = cv2.findNonZero(gray)  # Find all non-zero points (text)
+     a, b, w, h = cv2.boundingRect(coords)  # Find minimum spanning bounding box
++    if crop_margin and w and h:
++        left, top = max(0, a - crop_margin), max(0, b - crop_margin)
++        right = min(data.shape[1], a + w + crop_margin)
++        bottom = min(data.shape[0], b + h + crop_margin)
++        a, b, w, h = left, top, right - left, bottom - top
+     rect = data[b:b+h, a:a+w]
+     im = Image.fromarray(rect).convert('L')
+     dims = []
